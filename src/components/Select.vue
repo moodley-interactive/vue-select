@@ -5,7 +5,7 @@
 <template>
   <div :dir="dir" class="v-select" :class="stateClasses">
     <slot name="header" v-bind="scope.header" />
-    <div :id="`vs${uid}__combobox`" ref="toggle" @mousedown.prevent="toggleDropdown" class="vs__dropdown-toggle" role="combobox" :aria-expanded="dropdownOpen.toString()" :aria-owns="`vs${uid}__listbox`" aria-label="Search for option">
+    <div :id="`vs${uid}__combobox`" ref="toggle" @mousedown="toggleDropdown($event)" class="vs__dropdown-toggle" role="combobox" :aria-expanded="dropdownOpen.toString()" :aria-owns="`vs${uid}__listbox`" aria-label="Search for option">
 
       <div class="vs__selected-options" ref="selectedOptions">
 
@@ -57,7 +57,7 @@
       </div>
     </div>
     <transition :name="transition">
-      <ul ref="dropdownMenu" v-if="dropdownOpen" :id="`vs${uid}__listbox`" class="vs__dropdown-menu" role="listbox" @mousedown.prevent="onMousedown" @mouseup="onMouseUp" v-append-to-body>
+      <ul ref="dropdownMenu" v-if="dropdownOpen" :id="`vs${uid}__listbox`" :key="`vs${uid}__listbox`" class="vs__dropdown-menu" role="listbox" @mousedown.prevent="onMousedown" @mouseup="onMouseUp" tabindex="-1" v-append-to-body>
         <slot name="list-header" v-bind="scope.listHeader" />
         <li
           role="option"
@@ -74,7 +74,7 @@
             {{ getOptionLabel(option) }}
           </slot>
         </li>
-        <li v-if="filteredOptions.length === 0" class="vs__no-options" @mousedown.stop="">
+        <li v-if="filteredOptions.length === 0" class="vs__no-options">
           <slot name="no-options" v-bind="scope.noOptions">Sorry, no matching options.</slot>
         </li>
         <slot name="list-footer" v-bind="scope.listFooter" />
@@ -681,6 +681,7 @@
        * @return {void}
        */
       select(option) {
+        this.$emit('option:selecting', option);
         if (!this.isOptionSelected(option)) {
           if (this.taggable && !this.optionExists(option)) {
             this.$emit('option:created', option);
@@ -689,6 +690,7 @@
             option = this.selectedValue.concat(option)
           }
           this.updateValue(option);
+          this.$emit('option:selected', option);
         } else if (this.deselectByOption && (this.clearable || this.multiple && this.val.length > 1)) {
           this.deselect(option)
         }
@@ -701,9 +703,11 @@
        * @return {void}
        */
       deselect (option) {
+        this.$emit('option:deselecting', option);
         this.updateValue(this.selectedValue.filter(val => {
           return !this.optionComparator(val, option);
         }));
+        this.$emit('option:deselected', option);
       },
 
       /**
@@ -721,7 +725,7 @@
        */
       onAfterSelect(option) {
         if (this.closeOnSelect) {
-          this.open = !this.open
+          this.open = !this.open;
           this.searchEl.blur()
         }
 
@@ -739,7 +743,7 @@
        * @param value
        */
       updateValue (value) {
-        if (this.isTrackingValues) {
+        if (typeof this.value === 'undefined') {
           // Vue select has to manage value
           this.$data._value = value;
         }
@@ -757,22 +761,28 @@
 
       /**
        * Toggle the visibility of the dropdown menu.
-       * @param  {Event} e
+       * @param  {Event} event
        * @return {void}
        */
-      toggleDropdown ({target}) {
+      toggleDropdown (event) {
+        const targetIsNotSearch = event.target !== this.searchEl;
+        if (targetIsNotSearch) {
+          event.preventDefault();
+        }
+
         //  don't react to click on deselect/clear buttons,
         //  they dropdown state will be set in their click handlers
         const ignoredButtons = [
           ...(this.$refs['deselectButtons'] || []),
-          ...([this.$refs['clearButton']] || [])
+          ...([this.$refs['clearButton']] || []),
         ];
 
-        if (ignoredButtons.some(ref => ref.contains(target) || ref === target)) {
+        if (this.searchEl === undefined || ignoredButtons.filter(Boolean).some(ref => ref.contains(event.target) || ref === event.target)) {
+          event.preventDefault();
           return;
         }
 
-        if (this.open) {
+        if (this.open && targetIsNotSearch) {
           this.searchEl.blur();
         } else if (!this.disabled) {
           this.open = true;
@@ -1009,7 +1019,6 @@
        */
       selectedValue () {
         let value = this.value;
-
         if (this.isTrackingValues) {
           // Vue select has to manage value internally
           value = this.$data._value;
@@ -1065,11 +1074,13 @@
               'aria-autocomplete': 'list',
               'aria-labelledby': `vs${this.uid}__combobox`,
               'aria-controls': `vs${this.uid}__listbox`,
-              'aria-activedescendant': this.typeAheadPointer > -1 ? `vs${this.uid}__option-${this.typeAheadPointer}` : '',
               'ref': 'search',
               'type': 'search',
               'autocomplete': this.autocomplete,
               'value': this.search,
+              ...(this.dropdownOpen && this.filteredOptions[this.typeAheadPointer] ? {
+                'aria-activedescendant': `vs${this.uid}__option-${this.typeAheadPointer}`
+              } : {}),
             },
             events: {
               'compositionstart': () => this.isComposing = true,
@@ -1177,10 +1188,13 @@
         }
 
         let options = this.search.length ? this.filter(optionList, this.search, this) : optionList;
-        if (this.taggable && this.search.length && !this.optionExists(this.createOption(this.search))) {
-          options.unshift(this.search)
+        if (this.taggable && this.search.length) {
+          const createdOption = this.createOption(this.search);
+          if (!this.optionExists(createdOption)) {
+            options.unshift(createdOption);
+          }
         }
-        return options
+        return options;
       },
 
       /**
